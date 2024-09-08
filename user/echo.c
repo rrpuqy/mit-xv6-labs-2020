@@ -9,6 +9,7 @@ main(int argc, char *argv[])
 
   for(i = 1; i < argc; i++){
     write(1, argv[i], strlen(argv[i]));
+    // printf("echo >>> %s:%d\n",argv[i],argc);
     if(i + 1 < argc){
       write(1, " ", 1);
     } else {

@@ -57,14 +57,19 @@ ls(char *path)
     while(read(fd, &de, sizeof(de)) == sizeof(de)){
       if(de.inum == 0)
         continue;
+      // 每次执行 p的地址是始终不变的
       memmove(p, de.name, DIRSIZ);
       p[DIRSIZ] = 0;
       if(stat(buf, &st) < 0){
         printf("ls: cannot stat %s\n", buf);
         continue;
       }
-      printf("%s %d %d %d\n", fmtname(buf), st.type, st.ino, st.size);
+      printf("%s %d %d %d\n", (buf), st.type, st.ino, st.size);
+      // printf("%s %d %d %d\n", fmtname(buf), st.type, st.ino, st.size);
+
+
     }
+
     break;
   }
   close(fd);
