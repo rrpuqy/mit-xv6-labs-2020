@@ -31,6 +31,9 @@ procinit(void)
   for(p = proc; p < &proc[NPROC]; p++) {
       initlock(&p->lock, "proc");
 
+      // init trace_mask = 0
+      p->trace_mask = 0;
+
       // Allocate a page for the process's kernel stack.
       // Map it high in memory, followed by an invalid
       // guard page.
@@ -127,6 +130,8 @@ found:
   p->context.ra = (uint64)forkret;
   p->context.sp = p->kstack + PGSIZE;
 
+  // p->trace_mask = 0;
+
   return p;
 }
 
@@ -150,6 +155,7 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->trace_mask = 0;
 }
 
 // Create a user page table for a given process,
@@ -196,7 +202,7 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
 }
 
 // a user program that calls exec("/init")
-// od -t xC initcode
+// od -t xC initcodef
 uchar initcode[] = {
   0x17, 0x05, 0x00, 0x00, 0x13, 0x05, 0x45, 0x02,
   0x97, 0x05, 0x00, 0x00, 0x93, 0x85, 0x35, 0x02,
@@ -294,6 +300,8 @@ fork(void)
   pid = np->pid;
 
   np->state = RUNNABLE;
+
+  np->trace_mask = p->trace_mask;
 
   release(&np->lock);
 
@@ -692,4 +700,17 @@ procdump(void)
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
   }
+}
+
+
+uint64 getunfree_proc(void) {
+  struct proc *p;
+  uint64 num = 0;
+  for (p = proc; p < &proc[NPROC]; p++) {
+      acquire(&p->lock);
+      if (p->state != UNUSED)
+        ++num;
+      release(&p->lock);
+    }
+    return num;
 }
