@@ -17,8 +17,9 @@ struct context {
   uint64 s10;
   uint64 s11;
 };
-
-// Per-CPU state.
+typedef uint64 *pagetable_t; // 512 PTEs
+extern pagetable_t kernel_pagetable;
+    // Per-CPU state.
 struct cpu {
   struct proc *proc;          // The process running on this cpu, or null.
   struct context context;     // swtch() here to enter scheduler().
@@ -97,8 +98,8 @@ struct proc {
   // these are private to the process, so p->lock need not be held.
   uint64 kstack;               // Virtual address of kernel stack
   uint64 sz;                   // Size of process memory (bytes)
-  pagetable_t pagetable;       // User page table
   struct trapframe *trapframe; // data page for trampoline.S
+  pagetable_t pagetable;       // User page table
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory

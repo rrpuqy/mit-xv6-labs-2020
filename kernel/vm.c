@@ -22,6 +22,7 @@ void
 kvminit()
 {
   kernel_pagetable = (pagetable_t) kalloc();
+  printf("kernel_page_table:%p\n",kernel_pagetable);
   memset(kernel_pagetable, 0, PGSIZE);
 
   // uart registers
@@ -45,6 +46,38 @@ kvminit()
   // map the trampoline for trap entry/exit to
   // the highest virtual address in the kernel.
   kvmmap(TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+}
+
+pagetable_t kpageinit(){
+  pagetable_t kpagetable = (pagetable_t)kalloc();
+  memset(kpagetable, 0, PGSIZE);
+
+  // uart registers
+  kpagemap(kpagetable,UART0, UART0, PGSIZE, PTE_R | PTE_W);
+
+  // virtio mmio disk interface
+  kpagemap(kpagetable,VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+  // CLINT
+  kpagemap(kpagetable,CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+
+  // PLIC
+  kpagemap(kpagetable,PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+
+  // map kernel text executable and read-only.
+  kpagemap(kpagetable,KERNBASE, KERNBASE, (uint64)etext - KERNBASE, PTE_R | PTE_X);
+
+  // map kernel data and the physical RAM we'll make use of.
+  kpagemap(kpagetable,(uint64)etext, (uint64)etext, PHYSTOP - (uint64)etext, PTE_R | PTE_W);
+
+  // map the trampoline for trap entry/exit to
+  // the highest virtual address in the kernel.
+  kpagemap(kpagetable,TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+
+  // vmprint(kpagetable);
+  // vmprint(kernel_pagetable);
+
+  return kpagetable;
 }
 
 // Switch h/w page table register to the kernel's page table,
@@ -120,6 +153,13 @@ kvmmap(uint64 va, uint64 pa, uint64 sz, int perm)
   if(mappages(kernel_pagetable, va, sz, pa, perm) != 0)
     panic("kvmmap");
 }
+
+void 
+kpagemap(pagetable_t kpagetable,uint64 va, uint64 pa, uint64 sz, int perm){
+  if (mappages(kpagetable, va, sz, pa, perm) != 0)
+    panic("kpagemap");
+}
+
 
 // translate a kernel virtual address to
 // a physical address. only needed for
@@ -289,6 +329,25 @@ freewalk(pagetable_t pagetable)
   kfree((void*)pagetable);
 }
 
+
+// only clear pagetable  but not mapping memory
+void freewalkkpage(pagetable_t kpagetable){
+  // there are 2^9 = 512 PTEs in a page table.
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = kpagetable[i];
+    if ((pte & PTE_V) && (pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+      // this PTE points to a lower-level page table.
+      uint64 child = PTE2PA(pte);
+      freewalkkpage((pagetable_t)child);
+      kpagetable[i] = 0;
+    } 
+    // else if (pte & PTE_V) {
+    //   panic("freewalk: leaf");
+    // }
+  }
+  kfree((void *)kpagetable);
+}
+
 // Free user memory pages,
 // then free page-table pages.
 void
@@ -297,6 +356,14 @@ uvmfree(pagetable_t pagetable, uint64 sz)
   if(sz > 0)
     uvmunmap(pagetable, 0, PGROUNDUP(sz)/PGSIZE, 1);
   freewalk(pagetable);
+}
+
+// Free user kpages-table pages
+// but not free leaf memory pages
+void ukpagefree(pagetable_t kpagetable){
+  // if (sz > 0)
+  //   uvmunmap(kpagetable, 0, PGROUNDUP(sz) / PGSIZE, 0);
+  freewalkkpage(kpagetable);
 }
 
 // Given a parent process's page table, copy
@@ -398,6 +465,21 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
   return 0;
 }
 
+// copy from user to kernel
+// do not need dereference
+// int copyin_new(char * dst,uint64 srcva,uint64 len){
+//   uint64 n,va0;
+//   while(len > 0){
+//     va0 = PGROUNDDOWN(srcva);
+//     n = PGSIZE - (srcva -  va0);
+//     if(n > len) n = len;
+//     memmove(dst, (void *)(srcva),n);
+//     len -= n;
+//     dst += n;
+//     srcva = va0 + PGSIZE;
+//   }
+//   return  0;
+// }
 // Copy a null-terminated string from user to kernel.
 // Copy bytes to dst from virtual address srcva in a given page table,
 // until a '\0', or max.
@@ -441,6 +523,33 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   }
 }
 
+// int copyinstr_new(char *dst,uint64 srcva, uint64 max){
+//   uint64 n,va0;
+//   int got_null = 0;
+//   while(got_null == 0 && max > 0){
+//     va0 = PGROUNDDOWN(srcva);
+//     n = PGSIZE -(srcva - va0);
+//     if(n>max) n = max;
+//     char *p = (char *)srcva;
+//     while(n > 0){
+//       if(*p == '\0'){
+//         *dst = '\0';
+//         got_null = 1;
+//         break;
+//       }
+//       else{
+//         *dst = *p;
+//       }
+//       --n;
+//       --max;
+//       p++;
+//       dst++;
+//     }
+//     srcva = va0 + PGSIZE;
+//   }
+//   if(got_null) return 0;
+//   else return -1;
+// }
 void vmpdeatil(pagetable_t pagetable, int depth) {
   if (depth == 3)
     return;
@@ -452,7 +561,7 @@ void vmpdeatil(pagetable_t pagetable, int depth) {
     ptr += 3;
   }
   *ptr = '\0';
-  for (int i = 0; i < 512; i++) {
+  for (int i = 0; i < 10; i++) {
     pte_t pte = pagetable[i];
     if (pte & PTE_V) {
       uint64 child = PTE2PA(pte);

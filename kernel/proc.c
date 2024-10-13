@@ -38,9 +38,12 @@ procinit(void)
       if(pa == 0)
         panic("kalloc");
       uint64 va = KSTACK((int) (p - proc));
+      // printf("%p:%p\n", va,pa);
       kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
       p->kstack = va;
   }
+  // uint64 pa = walkaddr(kernel_pagetable, 0x0000003fffffd000); 
+  // printf("pa:%p\n",pa);
   kvminithart();
 }
 
@@ -121,6 +124,42 @@ found:
     return 0;
   }
 
+  p->kpagetable = kpageinit();
+  if (p->kpagetable == 0) {
+    freeproc(p);
+    release(&p->lock);
+    return 0;
+  }
+  // for (struct proc* q = proc; q < &proc[NPROC]; q++)
+  {
+    // if(p==q)
+    {
+      // char *pa = kalloc();
+      // if (pa == 0)
+      //   panic("kalloc");
+      // uint64 va = KSTACK((int)(p - proc));
+      // kpagemap(p->kpagetable, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+      // kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+
+      // p->kstack = va;
+
+      uint64 va = KSTACK((int)(p - proc));
+      // uint64 kstack = p->kstack;
+      // printf("va:%p\n",va);
+      // printf("%p\n",kstack);
+      // uint64 kstack_vm = PGROUNDDOWN(va);
+      // printf("%p\n", kstack_vm);
+      // printf("another_kernel_page_table:%p\n",kernel_pagetable);
+
+      // uint64 kstack_pa = walkaddr(kernel_pagetable, kstack_vm);
+      uint64 kstack_pa = kvmpa(va);
+      // printf("kstack pa:%p\n", kstack_pa);
+      kpagemap(p->kpagetable, va, (uint64)kstack_pa, PGSIZE,
+                                        PTE_R | PTE_W);
+    }
+ 
+  }
+    
   // Set up new context to start executing at forkret,
   // which returns to user space.
   memset(&p->context, 0, sizeof(p->context));
@@ -141,6 +180,11 @@ freeproc(struct proc *p)
   p->trapframe = 0;
   if(p->pagetable)
     proc_freepagetable(p->pagetable, p->sz);
+  if(p->kpagetable){
+    proc_freekpagetable(p->kpagetable);
+    
+  }
+   
   p->pagetable = 0;
   p->sz = 0;
   p->pid = 0;
@@ -193,6 +237,15 @@ proc_freepagetable(pagetable_t pagetable, uint64 sz)
   uvmunmap(pagetable, TRAMPOLINE, 1, 0);
   uvmunmap(pagetable, TRAPFRAME, 1, 0);
   uvmfree(pagetable, sz);
+}
+
+//Free a process's kpage table
+void
+proc_freekpagetable(pagetable_t kpagetable) {
+  uvmunmap(kpagetable, TRAMPOLINE, 1, 0);
+  // uvmunmap(kpagetable, TRAPFRAME, 1, 0);
+
+  ukpagefree(kpagetable);
 }
 
 // a user program that calls exec("/init")
@@ -473,18 +526,30 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        w_satp(MAKE_SATP(p->kpagetable));
+        sfence_vma();
         swtch(&c->context, &p->context);
+        // w_satp(MAKE_SATP(p->kpagetable));
+        // sfence_vma();
 
+        w_satp(MAKE_SATP(kernel_pagetable));
+        sfence_vma();
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
 
         found = 1;
+        // w_satp(MAKE_SATP(kernel_pagetable));
+        // sfence_vma();
       }
       release(&p->lock);
     }
+    // w_satp(MAKE_SATP(kernel_pagetable));
+    // sfence_vma();
 #if !defined (LAB_FS)
     if(found == 0) {
+      // w_satp(MAKE_SATP(kernel_pagetable));
+      // sfence_vma();
       intr_on();
       asm volatile("wfi");
     }
